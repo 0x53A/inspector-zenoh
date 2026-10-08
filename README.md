@@ -57,6 +57,11 @@ external node/endpoint disappears.
 
 ## Browser build and run
 
+The `main` branch is deployed to
+<https://0x53a.github.io/inspector-zenoh/> by GitHub Actions. The first visit may
+reload once while a service worker enables the isolation headers required by
+threaded WASM.
+
 ```sh
 ./build-web.sh
 python3 web/serve.py 8090

@@ -20,7 +20,17 @@
   <script>
     (async () => {
       try {
-        if (!window.crossOriginIsolated) throw new Error('Use a secure context (localhost or HTTPS) with COOP/COEP headers. Start locally with python3 web/serve.py.');
+        if (!window.crossOriginIsolated) {
+          if (!('serviceWorker' in navigator)) throw new Error('This browser cannot enable the cross-origin isolation required by threaded WASM.');
+          await navigator.serviceWorker.register('./coi-serviceworker.js');
+          await navigator.serviceWorker.ready;
+          if (!navigator.serviceWorker.controller) {
+            await new Promise(resolve => navigator.serviceWorker.addEventListener('controllerchange', resolve, { once: true }));
+            window.location.reload();
+            return;
+          }
+          throw new Error('Cross-origin isolation is unavailable. Reload the page or use web/serve.py locally.');
+        }
         await wasm_bindgen('./pkg/inspector_zenoh_wasm_bg.wasm');
         await wasm_bindgen.start(document.getElementById('inspector'));
         document.getElementById('loading').remove();

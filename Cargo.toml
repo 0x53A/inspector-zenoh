@@ -1,0 +1,79 @@
+[package]
+name = "inspector-zenoh"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[lib]
+
+[dependencies]
+flume = "0.11"
+serde_json = "1"
+futures = "0.3"
+egui = "0.35"
+log = "0.4"
+serde = { version = "1", features = ["serde_derive"] }
+serde-big-array = "0.5"
+smart-default = "0.7"
+zenoh-buffers = "1.9.0"
+zenoh-ext = { version = "1.9.0", default-features = false, features = ["unstable"] }
+byteorder = "1.3"
+bytemuck = { version = "1", features = ["derive"] }
+web-time = "1"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+clap = { version = "4", features = ["derive"] }
+eframe = { version = "0.35", default-features = false, features = ["glow", "default_fonts", "wayland", "x11"] }
+zenoh = { version = "1.9.0", default-features = false, features = ["transport_tcp", "transport_ws"] }
+tokio = { version = "1", features = ["rt-multi-thread", "time", "macros"] }
+hiroz_native = { package = "hiroz", git = "https://github.com/0x53A/hiroz.git", branch = "fix/zenoh-default-features", default-features = false, features = [
+  "rmw-zenoh",
+  "jazzy",
+] }
+hiroz_protocol_native = { package = "hiroz-protocol", git = "https://github.com/0x53A/hiroz.git", branch = "fix/zenoh-default-features" }
+hiroz_cdr_native = { package = "hiroz-cdr", git = "https://github.com/0x53A/hiroz.git", branch = "fix/zenoh-default-features" }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+zenoh = { version = "1.9.0", default-features = false, features = ["transport_ws"] }
+eframe = { version = "0.35", default-features = false, features = ["glow", "default_fonts"] }
+
+console_error_panic_hook = "0.1"
+getrandom = { version = "0.3", features = ["wasm_js"] }
+hiroz_wasm = { package = "hiroz", git = "https://github.com/0x53A/hiroz.git", branch = "wasm", default-features = false, features = [
+  "jazzy",
+  "rmw-zenoh",
+] }
+hiroz_protocol_wasm = { package = "hiroz-protocol", git = "https://github.com/0x53A/hiroz.git", branch = "wasm" }
+hiroz_cdr_wasm = { package = "hiroz-cdr", git = "https://github.com/0x53A/hiroz.git", branch = "wasm" }
+js-sys = "0.3"
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+web-sys = { version = "0.3", features = [
+  "console",
+  "CustomElementRegistry",
+  "CssStyleDeclaration",
+  "Document",
+  "Element",
+  "HtmlCanvasElement",
+  "HtmlElement",
+  "History",
+  "Location",
+  "ShadowRoot",
+  "ShadowRootInit",
+  "ShadowRootMode",
+  "Url",
+  "UrlSearchParams",
+  "Window",
+] }
+# Pin the WASM runtime to the fork containing the browser clock and transport
+# batching fixes also selected by wasm/Cargo.toml.
+zenoh-runtime = { git = "https://github.com/0x53A/zenoh.git", branch = "wasm", features = ["wasm-threads"] }
+
+[build-dependencies]
+serde_json = "1"
+anyhow = "1.0"
+hiroz-codegen = { git = "https://github.com/0x53A/hiroz.git", branch = "fix/zenoh-default-features" }
+
+[patch.crates-io]
+# https://github.com/eclipse-zenoh/zenoh/issues/2663
+git-version = { git = "https://github.com/0x53A/rust-git-version", branch = "bugfix-spurrious-rebuilds" }

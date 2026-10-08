@@ -1,0 +1,7 @@
+/target/
+/wasm/target/
+/web/pkg/
+__pycache__/
+/.direnv/
+/schemas/
+/investigation/

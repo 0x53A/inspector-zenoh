@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#11171f">
+  <title>Inspector / Zenoh</title>
+  <style>
+    html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: #11171f; color: #dbe5ef; font-family: system-ui, sans-serif; }
+    canvas { width: 100%; height: 100%; display: block; }
+    #loading { position: absolute; top: 35%; left: 12%; right: 12%; max-width: 800px; }
+    h1 { color: #58ddc9; font-size: 26px; letter-spacing: .08em; }
+    p { line-height: 1.6; color: #a6b6c8; }
+  </style>
+</head>
+<body>
+  <canvas id="inspector" aria-label="Zenoh topic and message inspector"></canvas>
+  <div id="loading"><h1>INSPECTOR / ZENOH</h1><p id="status">Loading the message inspector…</p></div>
+  <script src="./pkg/inspector_zenoh_wasm.js"></script>
+  <script>
+    (async () => {
+      try {
+        if (!window.crossOriginIsolated) throw new Error('Use a secure context (localhost or HTTPS) with COOP/COEP headers. Start locally with python3 web/serve.py.');
+        await wasm_bindgen('./pkg/inspector_zenoh_wasm_bg.wasm');
+        await wasm_bindgen.start(document.getElementById('inspector'));
+        document.getElementById('loading').remove();
+      } catch (error) {
+        console.error(error);
+        document.getElementById('status').textContent = 'Could not start: ' + error;
+      }
+    })();
+  </script>
+</body>
+</html>

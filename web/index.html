@@ -20,18 +20,23 @@
   <script>
     (async () => {
       try {
+        const isolationReloadKey = 'inspector-zenoh-coi-reload';
         if (!window.crossOriginIsolated) {
           if (!('serviceWorker' in navigator)) throw new Error('This browser cannot enable the cross-origin isolation required by threaded WASM.');
-          await navigator.serviceWorker.register('./coi-serviceworker.js');
+          const alreadyReloaded = sessionStorage.getItem(isolationReloadKey) === '1';
+          await navigator.serviceWorker.register('./coi-serviceworker.js?v=2', { updateViaCache: 'none' });
           await navigator.serviceWorker.ready;
-          if (!navigator.serviceWorker.controller) {
-            await new Promise(resolve => navigator.serviceWorker.addEventListener('controllerchange', resolve, { once: true }));
-            window.location.reload();
-            return;
+          if (alreadyReloaded) {
+            sessionStorage.removeItem(isolationReloadKey);
+            throw new Error('Cross-origin isolation is unavailable. Clear this site\'s service-worker data or use web/serve.py locally.');
           }
-          throw new Error('Cross-origin isolation is unavailable. Reload the page or use web/serve.py locally.');
+          sessionStorage.setItem(isolationReloadKey, '1');
+          document.getElementById('status').textContent = 'Enabling threaded WebAssembly support…';
+          window.location.reload();
+          return;
         }
-        await wasm_bindgen('./pkg/inspector_zenoh_wasm_bg.wasm');
+        sessionStorage.removeItem(isolationReloadKey);
+        await wasm_bindgen({ module_or_path: './pkg/inspector_zenoh_wasm_bg.wasm' });
         await wasm_bindgen.start(document.getElementById('inspector'));
         document.getElementById('loading').remove();
       } catch (error) {

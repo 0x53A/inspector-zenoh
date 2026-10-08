@@ -3,7 +3,8 @@
 pub mod app;
 pub mod discovery;
 pub mod schema;
-mod size_estimation;
+#[doc(hidden)]
+pub mod size_estimation;
 pub mod transport;
 mod views;
 

@@ -6,7 +6,10 @@ use crate::{
 };
 use egui::{Color32, RichText};
 use hiroz::dynamic::DynamicMessage;
-use std::{sync::Arc, time::Duration};
+use std::{
+    sync::{Arc, TryLockError},
+    time::Duration,
+};
 use web_time::Instant;
 
 pub struct Inspector {
@@ -140,7 +143,15 @@ impl eframe::App for Inspector {
             reflection_pending,
             reflection_error,
         ) = if let Some(connection) = &self.connection {
-            let s = connection.snapshot.lock().unwrap();
+            // The transport runs on a Web Worker. Waiting for its mutex from the
+            // browser's main thread would call `Atomics.wait`, which browsers
+            // forbid in that context. Skip this frame if the worker is updating
+            // the snapshot; the repaint requested above will try again shortly.
+            let s = match connection.snapshot.try_lock() {
+                Ok(snapshot) => snapshot,
+                Err(TryLockError::WouldBlock) => return,
+                Err(TryLockError::Poisoned(error)) => error.into_inner(),
+            };
             (
                 s.status.clone(),
                 s.connected,

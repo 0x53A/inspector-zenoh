@@ -88,6 +88,8 @@ a browser-compatible secure WebSocket endpoint.
 ## Views
 
 - Live domain discovery, topic search, publisher/subscriber counts and node names.
+- A session-stable, virtualized topic list; disappeared topics remain in place as
+  gray offline entries, while the footer distinguishes live and seen counts.
 - Colored domain filters, topic cards, and live telemetry counters.
 - Latest message with received sample/byte counters, one-second rate measurements,
   and a pause control that freezes the displayed sample while reception continues.

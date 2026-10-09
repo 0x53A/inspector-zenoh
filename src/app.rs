@@ -1,12 +1,13 @@
 use crate::{
     discovery::{Topic, display_type},
     schema::{Registry, embedded_registry},
-    transport::{Connection, MAX_PAYLOAD, Sample},
+    transport::{Connection, MAX_PAYLOAD, Sample, Snapshot},
     views,
 };
 use egui::{Color32, RichText};
 use hiroz::dynamic::DynamicMessage;
 use std::{
+    collections::{BTreeMap, BTreeSet},
     sync::{Arc, TryLockError},
     time::Duration,
 };
@@ -17,6 +18,9 @@ pub struct Inspector {
     domain: Option<usize>,
     filter: String,
     connection: Option<Connection>,
+    snapshot: Snapshot,
+    listed_topics: BTreeMap<String, ListedTopic>,
+    seen_domains: BTreeSet<usize>,
     registry: Arc<Registry>,
     selected: Option<Topic>,
     paused: bool,
@@ -27,6 +31,12 @@ pub struct Inspector {
     previous_counts: (u64, u64),
     rate: (f64, f64),
     tab: usize,
+}
+
+#[derive(Clone)]
+struct ListedTopic {
+    topic: Topic,
+    live: bool,
 }
 
 impl Inspector {
@@ -89,6 +99,11 @@ impl Inspector {
         let connection = endpoint
             .as_ref()
             .map(|e| Connection::open(e.trim().to_owned()));
+        let mut snapshot = Snapshot::default();
+        snapshot.status = endpoint.as_ref().map_or_else(
+            || "Ready to connect".into(),
+            |endpoint| format!("Connecting to {}…", endpoint.trim()),
+        );
         let endpoint = endpoint.unwrap_or_else(|| {
             if cfg!(target_arch = "wasm32") {
                 "ws/127.0.0.1:7448".into()
@@ -103,6 +118,9 @@ impl Inspector {
             domain,
             filter: String::new(),
             connection,
+            snapshot,
+            listed_topics: BTreeMap::new(),
+            seen_domains: BTreeSet::new(),
             registry: Arc::new(registry),
             selected: None,
             paused: false,
@@ -122,6 +140,13 @@ impl Inspector {
         self.previous_counts = (0, 0);
         self.rate = (0.0, 0.0);
         self.last_meter = Instant::now();
+    }
+
+    fn reset_discovery(&mut self, status: String) {
+        self.snapshot = Snapshot::default();
+        self.snapshot.status = status;
+        self.listed_topics.clear();
+        self.seen_domains.clear();
     }
 }
 
@@ -145,13 +170,14 @@ impl eframe::App for Inspector {
         ) = if let Some(connection) = &self.connection {
             // The transport runs on a Web Worker. Waiting for its mutex from the
             // browser's main thread would call `Atomics.wait`, which browsers
-            // forbid in that context. Skip this frame if the worker is updating
-            // the snapshot; the repaint requested above will try again shortly.
-            let s = match connection.snapshot.try_lock() {
-                Ok(snapshot) => snapshot,
-                Err(TryLockError::WouldBlock) => return,
-                Err(TryLockError::Poisoned(error)) => error.into_inner(),
-            };
+            // forbid in that context. Keep painting the last complete snapshot
+            // while the worker updates the next one, preserving keyboard focus.
+            match connection.snapshot.try_lock() {
+                Ok(snapshot) => self.snapshot = snapshot.clone(),
+                Err(TryLockError::WouldBlock) => {}
+                Err(TryLockError::Poisoned(error)) => self.snapshot = error.into_inner().clone(),
+            }
+            let s = &self.snapshot;
             (
                 s.status.clone(),
                 s.connected,
@@ -182,6 +208,19 @@ impl eframe::App for Inspector {
                 None,
             )
         };
+        for listed in self.listed_topics.values_mut() {
+            listed.live = false;
+        }
+        for topic in &topics {
+            self.listed_topics.insert(
+                topic.key.clone(),
+                ListedTopic {
+                    topic: topic.clone(),
+                    live: true,
+                },
+            );
+        }
+        self.seen_domains.extend(domains.iter().copied());
         let elapsed = self.last_meter.elapsed().as_secs_f64();
         if elapsed >= 1.0 {
             self.rate = (
@@ -248,14 +287,17 @@ impl eframe::App for Inspector {
                         )
                         .clicked()
                     {
+                        let endpoint = self.endpoint.trim().to_owned();
                         self.reset_sample();
                         self.selected = None;
-                        self.connection = Some(Connection::open(self.endpoint.trim().to_owned()));
+                        self.reset_discovery(format!("Connecting to {endpoint}…"));
+                        self.connection = Some(Connection::open(endpoint));
                     }
                 } else if ui.button("Disconnect").clicked() {
                     self.connection = None;
                     self.selected = None;
                     self.reset_sample();
+                    self.reset_discovery("Ready to connect".into());
                 }
                 ui.label(RichText::new(&status).small().color(if connected {
                     MINT
@@ -268,15 +310,19 @@ impl eframe::App for Inspector {
         egui::Panel::bottom("footer").show(root_ui, |ui| {
             ui.horizontal_wrapped(|ui| {
                 ui.label(
-                    RichText::new(format!("{} DOMAINS", domains.len()))
+                    RichText::new(format!("{} DOMAINS", self.seen_domains.len()))
                         .small()
                         .color(CYAN),
                 );
                 ui.separator();
                 ui.label(
-                    RichText::new(format!("{} TOPICS", topics.len()))
-                        .small()
-                        .color(MINT),
+                    RichText::new(format!(
+                        "{} LIVE · {} SEEN",
+                        topics.len(),
+                        self.listed_topics.len()
+                    ))
+                    .small()
+                    .color(MINT),
                 );
                 ui.separator();
                 ui.weak(format!("{} embedded schemas", self.registry.len()));
@@ -299,15 +345,24 @@ impl eframe::App for Inspector {
                 let previous_domain = self.domain;
                 ui.horizontal_wrapped(|ui| {
                     ui.selectable_value(&mut self.domain, None, "All domains");
-                    for domain in &domains {
+                    for domain in &self.seen_domains {
+                        let live = domains.contains(domain);
                         ui.selectable_value(
                             &mut self.domain,
                             Some(*domain),
-                            RichText::new(format!("{domain}")).color(domain_color(*domain)),
+                            RichText::new(format!("{domain}")).color(if live {
+                                domain_color(*domain)
+                            } else {
+                                MUTED
+                            }),
                         )
                         .on_hover_text(format!(
-                            "{} topics",
-                            topics.iter().filter(|t| t.domain == *domain).count()
+                            "{} live · {} seen topics",
+                            topics.iter().filter(|t| t.domain == *domain).count(),
+                            self.listed_topics
+                                .values()
+                                .filter(|t| t.topic.domain == *domain)
+                                .count()
                         ));
                     }
                     if let Some(domain) = self.domain
@@ -331,18 +386,25 @@ impl eframe::App for Inspector {
                         .desired_width(f32::INFINITY),
                 );
                 ui.add_space(5.0);
-                egui::ScrollArea::vertical().show(ui, |ui| {
-                    let filter = self.filter.to_lowercase();
-                    let visible: Vec<_> = topics
-                        .iter()
-                        .filter(|t| {
-                            self.domain.is_none_or(|d| t.domain == d)
-                                && format!("{} {}", t.name, t.type_name)
-                                    .to_lowercase()
-                                    .contains(&filter)
-                        })
-                        .collect();
-                    for topic in &visible {
+                let filter = self.filter.to_lowercase();
+                let mut visible: Vec<_> = self
+                    .listed_topics
+                    .values()
+                    .filter(|listed| {
+                        let topic = &listed.topic;
+                        self.domain.is_none_or(|d| topic.domain == d)
+                            && format!("{} {}", topic.name, topic.type_name)
+                                .to_lowercase()
+                                .contains(&filter)
+                    })
+                    .cloned()
+                    .collect();
+                visible.sort_by(|a, b| {
+                    (&a.topic.name, &a.topic.key).cmp(&(&b.topic.name, &b.topic.key))
+                });
+                egui::ScrollArea::vertical().show_rows(ui, 96.0, visible.len(), |ui, rows| {
+                    for listed in &visible[rows] {
+                        let topic = &listed.topic;
                         let selected = self.selected.as_ref().is_some_and(|t| t.key == topic.key);
                         let embedded_schema =
                             self.registry.get(&topic.type_name, &topic.hash).is_ok();
@@ -350,14 +412,18 @@ impl eframe::App for Inspector {
                         let schema_ok = embedded_schema || runtime_schema;
                         let color = domain_color(topic.domain);
                         let response = egui::Frame::new()
-                            .fill(if selected {
+                            .fill(if !listed.live {
+                                Color32::from_rgb(12, 22, 37)
+                            } else if selected {
                                 Color32::from_rgb(21, 57, 83)
                             } else {
                                 Color32::from_rgb(17, 31, 53)
                             })
                             .stroke(egui::Stroke::new(
                                 1.0,
-                                if selected {
+                                if !listed.live {
+                                    Color32::from_rgb(38, 52, 68)
+                                } else if selected {
                                     color
                                 } else {
                                     Color32::from_rgb(30, 49, 77)
@@ -367,22 +433,48 @@ impl eframe::App for Inspector {
                             .inner_margin(12)
                             .show(ui, |ui| {
                                 ui.set_width(ui.available_width());
-                                ui.label(RichText::new(&topic.name).strong().size(15.0));
-                                ui.label(
-                                    RichText::new(display_type(&topic.type_name))
-                                        .small()
-                                        .color(MUTED),
+                                ui.add(
+                                    egui::Label::new(
+                                        RichText::new(&topic.name).strong().size(15.0).color(
+                                            if listed.live {
+                                                Color32::from_rgb(221, 233, 247)
+                                            } else {
+                                                MUTED
+                                            },
+                                        ),
+                                    )
+                                    .truncate(),
                                 );
-                                ui.horizontal_wrapped(|ui| {
-                                    badge(ui, &format!("D{}", topic.domain), color);
-                                    ui.label(
-                                        RichText::new(format!(
-                                            "{} pub · {} sub",
-                                            topic.publishers, topic.subscribers
-                                        ))
-                                        .small()
-                                        .color(MUTED),
+                                ui.add(
+                                    egui::Label::new(
+                                        RichText::new(display_type(&topic.type_name))
+                                            .small()
+                                            .color(MUTED),
+                                    )
+                                    .truncate(),
+                                );
+                                ui.horizontal(|ui| {
+                                    badge(
+                                        ui,
+                                        &format!("D{}", topic.domain),
+                                        if listed.live {
+                                            color
+                                        } else {
+                                            Color32::from_rgb(70, 80, 95)
+                                        },
                                     );
+                                    if listed.live {
+                                        ui.label(
+                                            RichText::new(format!(
+                                                "{} pub · {} sub",
+                                                topic.publishers, topic.subscribers
+                                            ))
+                                            .small()
+                                            .color(MUTED),
+                                        );
+                                    } else {
+                                        ui.label(RichText::new("OFFLINE").small().color(MUTED));
+                                    }
                                     ui.label(
                                         RichText::new(if runtime_schema {
                                             "REFLECTED"
@@ -392,19 +484,28 @@ impl eframe::App for Inspector {
                                             "RAW"
                                         })
                                         .small()
-                                        .color(if schema_ok { MINT } else { AMBER }),
+                                        .color(
+                                            if !listed.live {
+                                                MUTED
+                                            } else if schema_ok {
+                                                MINT
+                                            } else {
+                                                AMBER
+                                            },
+                                        ),
                                     );
                                 });
                             })
                             .response;
-                        if ui
-                            .interact(
-                                response.rect,
-                                ui.id().with(&topic.key),
-                                egui::Sense::click(),
-                            )
-                            .on_hover_cursor(egui::CursorIcon::PointingHand)
-                            .clicked()
+                        let response = ui.interact(
+                            response.rect,
+                            ui.id().with(&topic.key),
+                            egui::Sense::click(),
+                        );
+                        if listed.live
+                            && response
+                                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                .clicked()
                         {
                             self.reset_sample();
                             self.selected = Some((*topic).clone());

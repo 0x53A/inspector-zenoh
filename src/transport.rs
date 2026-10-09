@@ -27,7 +27,7 @@ pub struct Sample {
     pub size: usize,
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct Snapshot {
     pub status: String,
     pub connected: bool,

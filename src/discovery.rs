@@ -1,5 +1,7 @@
 //! One graph entry per ROS endpoint; aggregate by full data key, including type hash.
-use crate::protocol::{EndpointEntity, EndpointKind, Entity, KeyExprFormat, NodeEntity};
+use crate::protocol::{
+    EndpointEntity, EndpointKind, Entity, KeyExprFormat, NodeEntity, qos::QosProfile,
+};
 use std::collections::BTreeMap;
 
 #[derive(Clone, Debug)]
@@ -10,6 +12,8 @@ pub struct Topic {
     pub type_name: String,
     pub hash: String,
     pub publishers: usize,
+    /// Distinct advertised publisher profiles and their endpoint counts.
+    pub publisher_qos: Vec<(QosProfile, usize)>,
     pub transient_local: bool,
     pub subscribers: usize,
     pub nodes: Vec<String>,
@@ -79,6 +83,7 @@ impl Graph {
                 type_name: info.name.clone(),
                 hash: info.hash.to_string(),
                 publishers: 0,
+                publisher_qos: vec![],
                 transient_local: false,
                 subscribers: 0,
                 nodes: vec![],
@@ -86,6 +91,15 @@ impl Graph {
             });
             if endpoint.kind == EndpointKind::Publisher {
                 topic.publishers += 1;
+                if let Some((_, count)) = topic
+                    .publisher_qos
+                    .iter_mut()
+                    .find(|(qos, _)| *qos == endpoint.qos)
+                {
+                    *count += 1;
+                } else {
+                    topic.publisher_qos.push((endpoint.qos, 1));
+                }
                 topic.transient_local |=
                     endpoint.qos.durability == crate::protocol::qos::QosDurability::TransientLocal;
                 topic.endpoint = endpoint.clone();
@@ -142,9 +156,28 @@ mod tests {
         g.update(&a, true);
         g.update(&b, true);
         assert_eq!(g.topics()[0].publishers, 2);
+        assert_eq!(g.topics()[0].publisher_qos.len(), 2);
+        assert!(
+            g.topics()[0]
+                .publisher_qos
+                .iter()
+                .all(|(_, count)| *count == 1)
+        );
         assert!(g.topics()[0].transient_local);
         g.update(&b, false);
         assert!(!g.topics()[0].transient_local);
+        assert_eq!(g.topics()[0].publisher_qos, vec![(Default::default(), 1)]);
+        // Subscriber QoS must not appear among publisher offerings.
+        let mut subscriber = e.clone();
+        subscriber.kind = EndpointKind::Subscription;
+        subscriber.id = 4;
+        let subscriber_key = fmt
+            .liveliness_key_expr(&subscriber, &zid)
+            .unwrap()
+            .to_string();
+        g.update(&subscriber_key, true);
+        assert_eq!(g.topics()[0].publisher_qos, vec![(Default::default(), 1)]);
+        g.update(&subscriber_key, false);
         g.update(&b, true);
         e.node.as_mut().unwrap().domain_id = 19;
         let other = fmt.liveliness_key_expr(&e, &zid).unwrap().to_string();

@@ -51,6 +51,11 @@ reconnecting. Identical topic names in different domains remain separate.
 Selecting a topic announces a subscriber in that topic's domain; the inspector's
 own announcements do not appear in the discovery list.
 
+Topic details show advertised publisher QoS: reliability, durability, history/depth,
+deadline, lifespan, liveliness and lease duration. Identical profiles are grouped
+with publisher counts; differing profiles remain separate. These are publisher
+offerings, not the inspector subscriber's requested QoS.
+
 Only domains advertised through this router can be discovered. This does not
 scan other routers or DDS networks, and domains disappear when their last
 external node/endpoint disappears.

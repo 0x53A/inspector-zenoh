@@ -553,6 +553,13 @@ impl eframe::App for Inspector {
             badge(ui, &format!("DOMAIN {}", topic.domain), domain_color(topic.domain));
             ui.label(RichText::new(&topic.name).size(25.0).strong());
             ui.label(display_type(&topic.type_name));
+            if let Some(live) = topics.iter().find(|t| t.key == topic.key && t.publishers > 0) {
+                for (qos, count) in &live.publisher_qos {
+                    publisher_qos(ui, qos, *count);
+                }
+            } else {
+                ui.weak("Publisher QoS: unavailable (0 advertised publishers)");
+            }
             if !topics.iter().any(|t| t.key == topic.key && t.publishers > 0) { ui.colored_label(Color32::YELLOW, "No publisher currently advertised for this topic."); }
             ui.horizontal_wrapped(|ui| {
                 metric(ui, "FREQUENCY", format!("{:.1} Hz", self.rate.0), CYAN);
@@ -565,15 +572,13 @@ impl eframe::App for Inspector {
             if reflection_pending { ui.colored_label(CYAN, "Fetching runtime type description…"); }
             if let Some(error) = &reflection_error { ui.colored_label(Color32::YELLOW, error); }
             let waiting = if !connected {
-                "Disconnected. Reconnect to receive data."
+                "Disconnected"
             } else if !subscription_ready || active_key.as_ref() != Some(&topic.key) {
                 "Subscribing…"
             } else if !topics.iter().any(|t| t.key == topic.key && t.publishers > 0) {
-                "No publisher is currently advertised. Listening for one to appear."
-            } else if topics.iter().any(|t| t.key == topic.key && t.transient_local) {
-                "Waiting for a retained sample or the next publication…"
+                "Waiting for publisher"
             } else {
-                "Listening. This topic sends new publications only; it has no retained history."
+                "Waiting for sample"
             };
             ui.separator();
             ui.horizontal(|ui| {
@@ -617,6 +622,61 @@ const MINT: Color32 = Color32::from_rgb(90, 226, 172);
 const LILAC: Color32 = Color32::from_rgb(181, 156, 255);
 const AMBER: Color32 = Color32::from_rgb(255, 196, 99);
 const MUTED: Color32 = Color32::from_rgb(147, 172, 204);
+
+fn publisher_qos(ui: &mut egui::Ui, qos: &crate::protocol::qos::QosProfile, count: usize) {
+    use crate::protocol::qos::{QosDurability, QosHistory, QosLiveliness, QosReliability};
+    let reliability = match qos.reliability {
+        QosReliability::Reliable => "RELIABLE",
+        QosReliability::BestEffort => "BEST_EFFORT",
+    };
+    let durability = match qos.durability {
+        QosDurability::Volatile => "VOLATILE",
+        QosDurability::TransientLocal => "TRANSIENT_LOCAL",
+    };
+    let history = match qos.history {
+        QosHistory::KeepLast(depth) => format!("KEEP_LAST · Depth: {depth}"),
+        QosHistory::KeepAll => "KEEP_ALL · Depth: —".into(),
+    };
+    let liveliness = match qos.liveliness {
+        QosLiveliness::Automatic => "AUTOMATIC",
+        QosLiveliness::ManualByNode => "MANUAL_BY_NODE",
+        QosLiveliness::ManualByTopic => "MANUAL_BY_TOPIC",
+    };
+    ui.horizontal_wrapped(|ui| {
+        ui.label(
+            RichText::new(format!("Publisher QoS ({count} pub):"))
+                .small()
+                .color(MUTED),
+        );
+        for value in [
+            format!("Reliability: {reliability}"),
+            format!("Durability: {durability}"),
+            format!("History: {history}"),
+        ] {
+            ui.label(RichText::new(value).small().monospace());
+        }
+    });
+    ui.horizontal_wrapped(|ui| {
+        for value in [
+            format!("Deadline: {}", qos_duration(qos.deadline)),
+            format!("Lifespan: {}", qos_duration(qos.lifespan)),
+            format!("Liveliness: {liveliness}"),
+            format!("Lease: {}", qos_duration(qos.liveliness_lease_duration)),
+        ] {
+            ui.label(RichText::new(value).small().monospace().color(MUTED));
+        }
+    });
+}
+
+fn qos_duration(value: crate::protocol::qos::QosDuration) -> String {
+    if value == crate::protocol::qos::QosDuration::INFINITE {
+        "∞".into()
+    } else if value.nsec == 0 {
+        format!("{} s", value.sec)
+    } else {
+        format!("{}.{:09} s", value.sec, value.nsec)
+    }
+}
 
 fn domain_color(domain: usize) -> Color32 {
     [CYAN, LILAC, MINT, AMBER, Color32::from_rgb(255, 139, 169)][(domain ^ (domain >> 3)) % 5]

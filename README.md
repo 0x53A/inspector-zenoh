@@ -69,7 +69,13 @@ python3 web/serve.py 8090
 
 Open <http://localhost:8090>, enter `ws/rover-host:7448`, then connect.
 `?endpoint=ws/rover-host:7448` auto-connects; optional `&domain=0` sets the initial
-domain filter.
+domain filter. The hosted app accepts the same parameters, including secure
+WebSocket endpoints, for example:
+
+```text
+https://0x53a.github.io/inspector-zenoh/?endpoint=wss%2Ffrost-eros-agx.tail5cae6b.ts.net%3A8448&domain=123
+```
+
 The app only subscribes to a topic when selected. Selecting another topic drops
 the previous subscription. Disconnect closes the session.
 
